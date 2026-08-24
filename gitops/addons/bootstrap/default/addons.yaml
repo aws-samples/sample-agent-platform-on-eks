@@ -85,11 +85,29 @@ langfuse:
     keycloak:
       issuerUrl: '{{default (printf "https://%s/keycloak/realms/platform" .metadata.annotations.ingress_domain_name) (index .metadata.annotations "keycloak_issuer_url")}}'
       secretManagerKey: '{{.metadata.annotations.aws_cluster_name}}/keycloak-clients'
+  # Suppress server-side defaulting that never converges under ServerSideApply
+  # (OutOfSync with an empty diff while Healthy):
+  #  - ExternalSecret: ESO defaults target.deletionPolicy / template.mergePolicy
+  #    and per-data remoteRef strategy fields the chart does not declare.
+  #  - StatefulSet: the API server defaults persistentVolumeClaimRetentionPolicy
+  #    and volumeClaimTemplates subfields (apiVersion/kind/spec.volumeMode/status).
+  # Business fields (remoteRef.key/property, container images, replicas, storage
+  # requests) are outside these pointers, so real changes are still detected.
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
       jsonPointers:
-        - /spec/dataFrom
+        - /spec/target/deletionPolicy
+        - /spec/target/template/mergePolicy
+        - /spec/data/0/remoteRef/conversionStrategy
+        - /spec/data/0/remoteRef/decodingStrategy
+        - /spec/data/0/remoteRef/metadataPolicy
+        - /spec/data/0/remoteRef/nullBytePolicy
+    - group: apps
+      kind: StatefulSet
+      jsonPointers:
+        - /spec/persistentVolumeClaimRetentionPolicy
+        - /spec/volumeClaimTemplates
 
 jaeger:
   enabled: false
@@ -150,6 +168,29 @@ otel-collector:
       enabled: true
       remoteWriteEndpoint: '{{with (index .metadata.annotations "amp_endpoint_url")}}{{.}}{{end}}'
       clusterName: '{{.metadata.annotations.aws_cluster_name}}'
+  # The External Secrets Operator / API server default several ExternalSecret
+  # subfields that the chart does not declare (target.deletionPolicy=Retain,
+  # target.template.mergePolicy=Replace, and per-data remoteRef strategy fields:
+  # conversionStrategy/decodingStrategy/metadataPolicy/nullBytePolicy). Under
+  # ServerSideApply these server-defaulted fields make ArgoCD report the
+  # langfuse-otel-auth ExternalSecret perpetually OutOfSync (with an empty CLI
+  # diff) while the app is Healthy, driving a selfHeal loop. Ignore the
+  # ESO/server-managed fields. Real changes to remoteRef.key/property/secretKey
+  # are NOT under these pointers, so they are still detected.
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jsonPointers:
+        - /spec/target/deletionPolicy
+        - /spec/target/template/mergePolicy
+        - /spec/data/0/remoteRef/conversionStrategy
+        - /spec/data/0/remoteRef/decodingStrategy
+        - /spec/data/0/remoteRef/metadataPolicy
+        - /spec/data/0/remoteRef/nullBytePolicy
+        - /spec/data/1/remoteRef/conversionStrategy
+        - /spec/data/1/remoteRef/decodingStrategy
+        - /spec/data/1/remoteRef/metadataPolicy
+        - /spec/data/1/remoteRef/nullBytePolicy
 
 prometheus-operator-crds:
   enabled: true
